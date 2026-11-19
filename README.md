@@ -1,15 +1,18 @@
 # lusoup
 
-A fast, lightweight HTML parser and scraping library for Lua, inspired by Python's BeautifulSoup. Written in 100% pure Lua with zero external dependencies.
+A lightweight HTML parser and scraping library for Lua, inspired by Python's BeautifulSoup. Written in 100% pure Lua with zero external dependencies, it runs on Lua 5.1 to 5.4 and LuaJIT.
+
+Its parser implements the [WHATWG HTML parsing algorithm](https://html.spec.whatwg.org/multipage/parsing.html), so it builds the same trees as browsers do, even from broken HTML: it passes all of the [html5lib tree-construction tests](#testing).
 
 ---
 
 ## Features
 
+- Standards-compliant parsing: unclosed and misnested tags, tables, forms, `<template>`, SVG and MathML are handled as browsers handle them. Whole documents or fragments, in any context element.
 - CSS Selectors: Classes (.btn), IDs (#main), nested chains (ul > li), comma lists (h1, h2), pseudo-classes (:first-child, :last-child), and attribute matchers ([href^=https], [src$=.png], [data*=val]).
 - Syntactic Sugar: Direct dot-notation node access (soup.head.title, soup.body.div.h1).
 - DOM Navigation: Flexible tree traversal with :parent_node(), :next_sibling(), :prev_sibling(), :closest(), and :children_nodes().
-- Entity Decoding: Automatic decoding for common and numeric HTML entities (&amp;, &quot;, hex/dec unicode).
+- Entity Decoding: All of HTML5's named character references (&amp;, &eacute;, &NotEqualTilde;, ...) and numeric ones, decoded while parsing, and available on their own as `lusoup.entities.decode()`.
 - Tree Mutation: Clean tag removal using :decompose().
 - Serialization: Clean HTML reconstruction via :inner_html() and :outer_html().
 
@@ -62,6 +65,36 @@ print(card:attr("id"))    --> card-1
 
 ---
 
+## Parsing
+
+`lusoup.parse(html, options)` parses a fragment, as if setting `innerHTML`
+on an element: by default a `<body>`. The result is a `document` node whose
+children are the fragment's top-level nodes.
+
+`lusoup.parse_document(html, options)` parses a whole document: the result
+holds the doctype, if any, and an `<html>` element with its `<head>` and
+`<body>`, whether or not they were written out.
+
+Both take an optional table of options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `comments` | `false` | Keep comments as `#comment` nodes. |
+| `scripting` | `true` | Parse as if scripting is enabled, as browsers do; this makes `<noscript>`'s content text. |
+| `context` | `"body"` | `parse()` only: the element the fragment is parsed in, e.g. `"td"`, `"title"` or `"svg path"`. |
+
+Nodes have a `tag`: an element's name (lowercase, except for some SVG
+names such as `foreignObject`), or `"#text"`, `"#comment"`, `"#doctype"`,
+`"#processing-instruction"` or `"document"`. Text and comments keep their
+content in `text_content`, already decoded; a processing instruction has a
+`target`, and its data in `text_content`. SVG and MathML elements have `namespace` set to `"svg"` or
+`"math"`. A `<template>`'s children are in its `content`.
+
+As in browsers, a boolean attribute such as `<input disabled>` has the value
+`""`, so test it with `node:attr("disabled") ~= nil`.
+
+---
+
 ## Scraping with lureq
 
 ```lua
@@ -104,12 +137,14 @@ or to test under a particular Lua version:
 luarocks test -- --lua=lua5.4
 ```
 
+
 or to run only the tests whose names match a Lua pattern, such as the
-tests of attributes:
+tests of querying nodes (attributes, text, selectors and navigation):
 
 ```bash
-luarocks test -- --filter="attributes"
+luarocks test -- --filter="^Node"
 ```
+
 
 ### Parser Conformance
 
@@ -133,13 +168,11 @@ new tests and drops removed ones:
 spec/conformance/fetch.sh -u
 ```
 
-
 The parser tests include some limited fuzzing, but with a fixed seed. For real extensive fuzzing:
 
 ```bash
 lua spec/fuzz.lua -n 100000 [-s seed]
 ```
-
 
 ---
 
