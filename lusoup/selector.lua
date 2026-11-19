@@ -48,7 +48,7 @@ local function parse_single_selector(sel)
 end
 
 local function node_matches(node, rule)
-    if not node or node.tag == "#text" then
+    if not node or not node:is_element() then
         return false
     end
 
@@ -91,7 +91,7 @@ local function node_matches(node, rule)
     if rule.pseudo and node.parent then
         local siblings = {}
         for _, child in ipairs(node.parent.children) do
-            if child.tag ~= "#text" then
+            if child:is_element() then
                 table.insert(siblings, child)
             end
         end

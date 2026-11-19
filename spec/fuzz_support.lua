@@ -12,6 +12,7 @@ local SOUP_TAGS = {
     "dd", "dt", "dl", "table", "tbody", "tr", "td", "th", "caption", "col",
     "h1", "h2", "pre", "button", "form", "select", "option", "optgroup",
     "br", "hr", "img", "title", "script", "plaintext",
+    "html", "head", "body", "meta", "link", "style",
 }
 
 -- Random tag soup: start tags, end tags and text in any order.
@@ -82,12 +83,22 @@ function M.check_tree(root)
     return check(root, root.tag)
 end
 
--- Parse `html` and check everything we can about the result.
--- Returns nil, or a description of the failure.
+-- Parse `html`, both as a fragment and as a whole document, and check
+-- everything we can about the results. Returns nil, or a description of the failure.
 function M.check(html, must_round_trip)
     local ok, result = pcall(function()
+        local document = lusoup.parse_document(html)
+        local err = M.check_tree(document)
+        if err then
+            return "parse_document: " .. err
+        end
+        local html_nodes = document.children
+        if #html_nodes ~= 1 or html_nodes[1].tag ~= "html" then
+            return "parse_document: the document's only child isn't <html>"
+        end
+
         local root = lusoup.parse(html)
-        local err = M.check_tree(root)
+        err = M.check_tree(root)
         if err then
             return err
         end

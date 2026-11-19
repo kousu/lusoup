@@ -36,7 +36,9 @@ build = {
       ["lusoup"] = "lusoup/init.lua",
       ["lusoup.dom"] = "lusoup/dom.lua",
       ["lusoup.tokenizer"] = "lusoup/tokenizer.lua",
+      ["lusoup.treebuilder"] = "lusoup/treebuilder.lua",
       ["lusoup.selector"] = "lusoup/selector.lua",
-      ["lusoup.entities"] = "lusoup/entities.lua"
+      ["lusoup.entities"] = "lusoup/entities.lua",
+      ["lusoup.entity_table"] = "lusoup/entity_table.lua"
    }
 }

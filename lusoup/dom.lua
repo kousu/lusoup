@@ -1,6 +1,15 @@
-local entities = require("lusoup.entities")
-
 local Node = {}
+
+-- Node kinds besides elements, which are distinguished by their tag:
+--   "#text"     text_content is the (decoded) text
+--   "#comment"  text_content is the comment's text
+--   "#doctype"  name, public_id and system_id
+--   "#processing-instruction"  target, and text_content is its data
+--   "document" and "#document-fragment": the roots of parsed trees
+local function is_element(node)
+    return node.tag:sub(1, 1) ~= "#" and node.tag ~= "document"
+end
+Node.is_element = is_element
 
 function Node.new(tag, attrs, parent)
     local self = {
@@ -15,7 +24,11 @@ end
 
 -- A node's own fields, as opposed to names of child nodes that can be
 -- accessed with the same syntax (e.g. node.children vs node.ul.li).
-local DECLARED_FIELDS = { tag = true, attrs = true, children = true, parent = true, text_content = true }
+local DECLARED_FIELDS = {
+    tag = true, attrs = true, children = true, parent = true, text_content = true,
+    namespace = true, attr_ns = true, content = true, name = true, public_id = true,
+    system_id = true, target = true,
+}
 
 function Node.__index(table, key)
     if Node[key] ~= nil then
@@ -46,7 +59,10 @@ end
 
 function Node:text()
     if self.tag == "#text" then
-        return entities.decode(self.text_content or "")
+        return self.text_content or ""
+    elseif not is_element(self) and self.tag ~= "document" and self.tag ~= "#document-fragment" then
+        return "" -- comments, doctypes and processing instructions have no text
+
     end
 
     local texts = {}
@@ -68,7 +84,7 @@ end
 function Node:children_nodes()
     local res = {}
     for _, child in ipairs(self.children) do
-        if child.tag ~= "#text" then
+        if is_element(child) then
             table.insert(res, child)
         end
     end
@@ -81,7 +97,7 @@ function Node:next_sibling()
     for i, child in ipairs(siblings) do
         if child == self then
             for j = i + 1, #siblings do
-                if siblings[j].tag ~= "#text" then
+                if is_element(siblings[j]) then
                     return siblings[j]
                 end
             end
@@ -97,7 +113,7 @@ function Node:prev_sibling()
     for i, child in ipairs(siblings) do
         if child == self then
             for j = i - 1, 1, -1 do
-                if siblings[j].tag ~= "#text" then
+                if is_element(siblings[j]) then
                     return siblings[j]
                 end
             end
@@ -122,7 +138,7 @@ end
 
 local function collect_all_nodes(node, list)
     for _, child in ipairs(node.children) do
-        if child.tag ~= "#text" then
+        if is_element(child) then
             table.insert(list, child)
             collect_all_nodes(child, list)
         end
@@ -170,22 +186,54 @@ function Node:decompose()
     end
 end
 
+-- Elements whose text is serialized as-is, without escaping.
+local RAW_TEXT = {
+    style = true, script = true, xmp = true, iframe = true, noembed = true,
+    noframes = true, plaintext = true, noscript = true,
+}
+
+local VOID_ELEMENTS = {
+    area = true, base = true, br = true, col = true, embed = true,
+    hr = true, img = true, input = true, link = true, meta = true,
+    param = true, source = true, track = true, wbr = true,
+    basefont = true, bgsound = true, frame = true, keygen = true,
+}
+
+local function escape_text(s)
+    return (s:gsub("&", "&amp;"):gsub("\194\160", "&nbsp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+end
+
+local function escape_attr(s)
+    return (s:gsub("&", "&amp;"):gsub("\194\160", "&nbsp;"):gsub('"', "&quot;"))
+end
+
 function Node:inner_html()
-    if self.tag == "#text" then
-        return self.text_content or ""
+    if self.tag:sub(1, 1) == "#" and self.tag ~= "#document-fragment" then
+        return ""
     end
     local parts = {}
-    for _, child in ipairs(self.children) do
-        table.insert(parts, child:outer_html())
+    -- a <template>'s children are in its content
+    local children = (self.content or self).children
+    for _, child in ipairs(children) do
+        if child.tag == "#text" and RAW_TEXT[self.tag] and not self.namespace then
+            table.insert(parts, child.text_content or "")
+        else
+            table.insert(parts, child:outer_html())
+        end
     end
     return table.concat(parts, "")
 end
 
 function Node:outer_html()
     if self.tag == "#text" then
-        return self.text_content or ""
-    end
-    if self.tag == "document" then
+        return escape_text(self.text_content or "")
+    elseif self.tag == "#comment" then
+        return "<!--" .. (self.text_content or "") .. "-->"
+    elseif self.tag == "#processing-instruction" then
+        return "<?" .. self.target .. " " .. (self.text_content or "") .. "?>"
+    elseif self.tag == "#doctype" then
+        return "<!DOCTYPE " .. (self.name or "") .. ">"
+    elseif not is_element(self) then
         return self:inner_html()
     end
 
@@ -194,7 +242,8 @@ function Node:outer_html()
         if v == true or v == k then
             table.insert(attr_parts, k)
         else
-            table.insert(attr_parts, string.format('%s="%s"', k, tostring(v)))
+            -- values are stored decoded, so escape them again
+            table.insert(attr_parts, string.format('%s="%s"', k, escape_attr(tostring(v))))
         end
     end
 
@@ -204,13 +253,7 @@ function Node:outer_html()
         attr_str = " " .. table.concat(attr_parts, " ")
     end
 
-    local VOID_ELEMENTS = {
-        area = true, base = true, br = true, col = true, embed = true,
-        hr = true, img = true, input = true, link = true, meta = true,
-        param = true, source = true, track = true, wbr = true
-    }
-
-    if VOID_ELEMENTS[self.tag:lower()] then
+    if VOID_ELEMENTS[self.tag] and not self.namespace then
         return string.format("<%s%s />", self.tag, attr_str)
     end
 
@@ -245,7 +288,7 @@ function Node:find_all(tag, attrs)
 
     local function traverse(node)
         for _, child in ipairs(node.children) do
-            if child.tag ~= "#text" then
+            if is_element(child) then
                 if match_node(child) then
                     table.insert(results, child)
                 end

@@ -1,4 +1,4 @@
-local tokenizer = require("lusoup.tokenizer")
+local treebuilder = require("lusoup.treebuilder")
 local selector = require("lusoup.selector")
 local Node = require("lusoup.dom")
 
@@ -13,8 +13,15 @@ end
 
 local lusoup = {}
 
-function lusoup.parse(html)
-    return tokenizer.parse(html)
+-- Parse an HTML fragment, as found inside a <body> (or the element named by
+-- options.context). See lusoup.treebuilder for the options.
+function lusoup.parse(html, options)
+    return treebuilder.parse(html, options)
+end
+
+-- Parse a whole HTML document, building the <html>, <head> and <body> it implies.
+function lusoup.parse_document(html, options)
+    return treebuilder.parse_document(html, options)
 end
 
 return lusoup
