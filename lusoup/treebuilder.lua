@@ -11,6 +11,22 @@
 local Node = require("lusoup.dom")
 local tokenizer_mod = require("lusoup.tokenizer")
 
+-- table.concat, in pieces: gopher-lua (micro's Lua) pushes every element
+-- onto its fixed-size registry, so concatenating more than a few thousand
+-- at once fails with "registry overflow".
+local function concat(t, sep)
+    sep = sep or ""
+    local n = #t
+    if n <= 1000 then
+        return table.concat(t, sep)
+    end
+    local chunks = {}
+    for i = 1, n, 1000 do
+        chunks[#chunks + 1] = table.concat(t, sep, i, math.min(i + 999, n))
+    end
+    return concat(chunks, sep)
+end
+
 local function set(list)
     local t = {}
     for tag in list:gmatch("%S+") do
@@ -231,14 +247,39 @@ local MARKER = { marker = true }
 local Builder = {}
 Builder.__index = Builder
 
+-- These avoid patterns, which are slow in some Lua implementations (micro's
+-- gopher-lua), on the path every text token takes.
+local byte = string.byte
+
+local function is_space_byte(b)
+    return b == 32 or b == 10 or b == 9 or b == 12 or b == 13
+end
+
+-- The length of the whitespace at the start of s.
+local function leading_whitespace(s)
+    local i = 1
+    while is_space_byte(byte(s, i)) do
+        i = i + 1
+    end
+    return i - 1
+end
+
 local function is_whitespace_text(s)
-    return not s:find("[^ \t\n\f\r]")
+    return leading_whitespace(s) == #s
 end
 
 -- Split text into its leading whitespace and the rest.
 local function split_leading_whitespace(s)
-    local ws = s:match("^[ \t\n\f\r]*")
-    return ws, s:sub(#ws + 1)
+    local n = leading_whitespace(s)
+    return s:sub(1, n), s:sub(n + 1)
+end
+
+-- s without NULs.
+local function strip_nuls(s)
+    if s:find("\0", 1, true) then
+        return (s:gsub("%z", ""))
+    end
+    return s
 end
 
 local function copy(t)
@@ -1183,7 +1224,7 @@ local BLOCK_END = set([[address article aside blockquote button center details
     menu nav ol pre search section select summary ul]])
 
 function Builder:body_text(text)
-    text = text:gsub("%z", "")
+    text = strip_nuls(text)
     if text == "" then
         return
     end
@@ -1682,13 +1723,13 @@ end
 
 modes.in_table_text = function(self, t)
     if t.type == "text" then
-        local text = t.text:gsub("%z", "")
+        local text = strip_nuls(t.text)
         if text ~= "" then
             self.pending_table_text[#self.pending_table_text + 1] = text
         end
         return
     end
-    local text = table.concat(self.pending_table_text)
+    local text = concat(self.pending_table_text)
     self.pending_table_text = {}
     if text ~= "" then
         if not is_whitespace_text(text) then
@@ -2168,10 +2209,13 @@ end
 function Builder:foreign_content(t)
     local tag = t.tag
     if t.type == "text" then
-        local text = t.text:gsub("%z", "\239\191\189")
+        local text = t.text
+        if text:find("\0", 1, true) then
+            text = text:gsub("%z", "\239\191\189")
+        end
         self:insert_text(text)
         -- NULs (now U+FFFD) don't count
-        if not is_whitespace_text((t.text:gsub("%z", ""))) then
+        if not is_whitespace_text(strip_nuls(t.text)) then
             self.frameset_ok = false
         end
         return
@@ -2271,6 +2315,7 @@ local function new_builder(html_str, options)
         pending_table_text = {},
         quirks = "no-quirks",
         scripting = options.scripting ~= false,
+        yield = options.yield,
         keep_comments = options.comments,
         skip_newline = false,
         stopped = false,
@@ -2285,6 +2330,7 @@ end
 
 function Builder:run()
     local tokenizer = self.tokenizer
+    local yield = self.yield
     while not self.stopped do
         local t = tokenizer:next()
         if self.skip_newline then
@@ -2303,6 +2349,9 @@ function Builder:run()
                 self.stopped = true
             end
         end
+        if yield then
+            yield()
+        end
     end
     -- stop parsing: pop all the nodes off the stack
     while #self.stack > 0 do
@@ -2317,6 +2366,7 @@ end
 -- options:
 --   comments   keep comments (default false)
 --   scripting  parse as if scripting is enabled, as in browsers (default true)
+--   yield      a function called after each token, e.g. to yield a coroutine
 local function parse_document(html_str, options)
     local builder = new_builder(html_str, options)
     builder:run()

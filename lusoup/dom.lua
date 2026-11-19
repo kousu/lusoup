@@ -1,3 +1,19 @@
+-- table.concat, in pieces: gopher-lua (micro's Lua) pushes every element
+-- onto its fixed-size registry, so concatenating more than a few thousand
+-- at once fails with "registry overflow".
+local function concat(t, sep)
+    sep = sep or ""
+    local n = #t
+    if n <= 1000 then
+        return table.concat(t, sep)
+    end
+    local chunks = {}
+    for i = 1, n, 1000 do
+        chunks[#chunks + 1] = table.concat(t, sep, i, math.min(i + 999, n))
+    end
+    return concat(chunks, sep)
+end
+
 local Node = {}
 
 -- Node kinds besides elements, which are distinguished by their tag:
@@ -86,7 +102,7 @@ function Node:text()
     end
 
     -- in parentheses, so only the string is returned, not gsub's count
-    return (table.concat(texts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+    return (concat(texts, " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 function Node:parent_node()
@@ -259,7 +275,7 @@ function Node:inner_html()
             table.insert(parts, child:outer_html())
         end
     end
-    return table.concat(parts, "")
+    return concat(parts, "")
 end
 
 function Node:outer_html()
@@ -288,7 +304,7 @@ function Node:outer_html()
     local attr_str = ""
     if #attr_parts > 0 then
         table.sort(attr_parts)
-        attr_str = " " .. table.concat(attr_parts, " ")
+        attr_str = " " .. concat(attr_parts, " ")
     end
 
     if VOID_ELEMENTS[self.tag] and not self.namespace then

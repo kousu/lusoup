@@ -17,6 +17,22 @@
 
 local entity_table = require("lusoup.entity_table")
 
+-- table.concat, in pieces: gopher-lua (micro's Lua) pushes every element
+-- onto its fixed-size registry, so concatenating more than a few thousand
+-- at once fails with "registry overflow".
+local function concat(t, sep)
+    sep = sep or ""
+    local n = #t
+    if n <= 1000 then
+        return table.concat(t, sep)
+    end
+    local chunks = {}
+    for i = 1, n, 1000 do
+        chunks[#chunks + 1] = table.concat(t, sep, i, math.min(i + 999, n))
+    end
+    return concat(chunks, sep)
+end
+
 local MAX_ENTITY_LENGTH = 0
 for name in pairs(entity_table) do
     if #name > MAX_ENTITY_LENGTH then
@@ -92,7 +108,9 @@ Tokenizer.__index = Tokenizer
 
 local function new(input)
     -- HTML normalizes line endings to LF before tokenizing
-    input = input:gsub("\r\n?", "\n")
+    if input:find("\r", 1, true) then
+        input = input:gsub("\r\n?", "\n")
+    end
     return setmetatable({
         input = input,
         pos = 1,
@@ -108,6 +126,7 @@ local function new(input)
         char_ref_code = 0,
         allow_cdata = nil, -- set by the tree builder: function() -> bool
         done = false,
+        next_at = {}, -- see next_of()
     }, Tokenizer)
 end
 
@@ -119,7 +138,7 @@ end
 
 function Tokenizer:flush_text()
     if #self.text > 0 then
-        self.queue[#self.queue + 1] = { type = "text", text = table.concat(self.text) }
+        self.queue[#self.queue + 1] = { type = "text", text = concat(self.text) }
         self.text = {}
     end
 end
@@ -165,7 +184,7 @@ function Tokenizer:finish_attribute()
         local token = self.token
         -- like browsers, the first occurrence of an attribute wins
         if token.attrs[name] == nil then
-            token.attrs[name] = table.concat(self.attr_value)
+            token.attrs[name] = concat(self.attr_value)
             token.attr_order[#token.attr_order + 1] = name
         end
         self.attr_name = nil
@@ -212,15 +231,35 @@ function Tokenizer:lookahead(s, case_insensitive)
     return got == s
 end
 
--- Consume a run of ordinary text up to the next character that matters in
--- the data, RCDATA, RAWTEXT, script data or PLAINTEXT states.
-function Tokenizer:consume_run(c, specials)
-    local input = self.input
-    local stop = specials and input:find(specials, self.pos)
-    local nul = input:find("\0", self.pos, true)
-    if nul and (not stop or nul < stop) then
-        stop = nul
+local RUN_DATA, RUN_LT, RUN_NONE, RUN_COMMENT = { "<", "&" }, { "<" }, {}, { "-", "<" }
+
+-- The position of the next `ch` at or after the current position, or false.
+-- Positions are remembered, so that each character is searched for once per
+-- occurrence rather than on every call (which would be quadratic for
+-- characters that don't occur). Plain searches, because pattern searches
+-- are slow in some Lua implementations (micro's gopher-lua).
+function Tokenizer:next_of(ch)
+    local next_at = self.next_at
+    local at = next_at[ch]
+    if at == nil or (at and at < self.pos) then
+        at = self.input:find(ch, self.pos, true) or false
+        next_at[ch] = at
     end
+    return at
+end
+
+-- Consume a run of ordinary text up to the next character that matters in
+-- the data, RCDATA, RAWTEXT, script data or PLAINTEXT states: one of
+-- `specials`, a list of characters, or a NUL.
+function Tokenizer:consume_run(c, specials)
+    local stop = self:next_of("\0")
+    for i = 1, #specials do
+        local at = self:next_of(specials[i])
+        if at and (not stop or at < stop) then
+            stop = at
+        end
+    end
+    local input = self.input
     stop = stop or (#input + 1)
     self:emit_char(c .. input:sub(self.pos, stop - 1))
     self.pos = stop
@@ -239,7 +278,7 @@ states.data = function(self, c)
     elseif c == nil then
         self:emit_eof()
     else
-        self:consume_run(c, "[<&]")
+        self:consume_run(c, RUN_DATA)
     end
 end
 
@@ -254,7 +293,7 @@ states.rcdata = function(self, c)
     elseif c == nil then
         self:emit_eof()
     else
-        self:consume_run(c, "[<&]")
+        self:consume_run(c, RUN_DATA)
     end
 end
 
@@ -266,7 +305,7 @@ states.rawtext = function(self, c)
     elseif c == nil then
         self:emit_eof()
     else
-        self:consume_run(c, "<")
+        self:consume_run(c, RUN_LT)
     end
 end
 
@@ -278,7 +317,7 @@ states.script_data = function(self, c)
     elseif c == nil then
         self:emit_eof()
     else
-        self:consume_run(c, "<")
+        self:consume_run(c, RUN_LT)
     end
 end
 
@@ -288,18 +327,140 @@ states.plaintext = function(self, c)
     elseif c == nil then
         self:emit_eof()
     else
-        self:consume_run(c, nil)
+        self:consume_run(c, RUN_NONE)
     end
 end
 
 -- ── Tags ────────────────────────────────────────────────────────────────────
 
+-- A fast path for the common case of a well-formed tag, read with patterns
+-- instead of a character at a time (as upstream lusoup does). `start` is the
+-- position of its name's first letter. Returns the position after the tag
+-- and emits it, or returns nil, having consumed nothing, if the tag has
+-- anything the state machine must handle: NULs, a missing `>` and so on.
+-- Character references in attribute values are decoded as the state machine
+-- would: a reference can't extend past the end of the value.
+local byte = string.byte
+local B_TAB, B_LF, B_FF, B_SPACE = 9, 10, 12, 32
+local B_NUL, B_SLASH, B_EQ, B_GT, B_DQ, B_SQ, B_AMP = 0, 47, 61, 62, 34, 39, 38
+
+local function is_space_byte(b)
+    return b == B_SPACE or b == B_LF or b == B_TAB or b == B_FF
+end
+
+-- The position of the first byte at or after `pos` that is whitespace or one
+-- of `a`, `b`, `c` (or the end of the input).
+local function scan_to(input, pos, a, b, c)
+    while true do
+        local x = byte(input, pos)
+        if x == nil or x == a or x == b or x == c or x == B_NUL or is_space_byte(x) then
+            return pos
+        end
+        pos = pos + 1
+    end
+end
+
+local function skip_space(input, pos)
+    while is_space_byte(byte(input, pos)) do
+        pos = pos + 1
+    end
+    return pos
+end
+
+local function fast_start_tag(self, start)
+    local input = self.input
+    local e = scan_to(input, start, B_SLASH, B_GT)
+    local token = {
+        type = "start",
+        tag = input:sub(start, e - 1):lower(),
+        attrs = {},
+        attr_order = {},
+        self_closing = false,
+    }
+    local attrs, order = token.attrs, token.attr_order
+    local pos = e
+    while true do
+        pos = skip_space(input, pos)
+        local x = byte(input, pos)
+        if x == B_GT then
+            break
+        elseif x == B_SLASH then
+            if byte(input, pos + 1) == B_GT then
+                token.self_closing = true
+                pos = pos + 1
+                break
+            end
+            pos = pos + 1
+        elseif x == nil or x == B_NUL or x == B_EQ then
+            return nil
+        else
+            local ae = scan_to(input, pos + 1, B_SLASH, B_GT, B_EQ)
+            if byte(input, ae) == B_NUL then
+                return nil
+            end
+            local aname = input:sub(pos, ae - 1):lower()
+            local value = ""
+            pos = skip_space(input, ae)
+            if byte(input, pos) == B_EQ then
+                pos = skip_space(input, pos + 1)
+                local q = byte(input, pos)
+                if q == B_DQ or q == B_SQ then
+                    local close = input:find(q == B_DQ and '"' or "'", pos + 1, true)
+                    if not close then
+                        return nil
+                    end
+                    value = input:sub(pos + 1, close - 1)
+                    pos = close + 1
+                elseif q ~= B_GT then
+                    local ve = scan_to(input, pos, B_GT)
+                    -- the value must end the way the state machine would end it
+                    local after = byte(input, ve)
+                    if after == nil or after == B_NUL or ve == pos then
+                        return nil
+                    end
+                    value = input:sub(pos, ve - 1)
+                    pos = ve
+                end
+                if value:find("\0", 1, true) then
+                    return nil
+                end
+                if value:find("&", 1, true) then
+                    -- required here: lusoup.entities requires this module
+                    value = require("lusoup.entities").decode(value, true)
+                end
+            end
+            if attrs[aname] == nil then
+                attrs[aname] = value
+                order[#order + 1] = aname
+            end
+        end
+    end
+    self:emit(token)
+    return pos + 1
+end
+
 states.tag_open = function(self, c)
     if c == "!" then
         self.state = "markup_declaration_open"
     elseif c == "/" then
+        local input, start = self.input, self.pos
+        if is_alpha(input:sub(start, start)) then
+            local e = scan_to(input, start + 1, B_SLASH, B_GT)
+            if byte(input, e) == B_GT then
+                self:emit({ type = "end", tag = input:sub(start, e - 1):lower() })
+                self.pos = e + 1
+                self.state = "data"
+                return
+            end
+        end
         self.state = "end_tag_open"
     elseif is_alpha(c) then
+        local after = fast_start_tag(self, self.pos - 1)
+        if after then
+            self.pos = after
+            self.state = "data"
+            return
+        end
         self:new_tag("start")
         self:reconsume("tag_name")
     elseif c == "?" then
@@ -447,7 +608,7 @@ states.script_data_escaped = function(self, c)
     elseif c == nil then
         self:emit_eof()
     else
-        self:consume_run(c, "[%-<]")
+        self:consume_run(c, RUN_COMMENT)
     end
 end
 

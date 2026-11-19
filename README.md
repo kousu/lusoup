@@ -81,6 +81,7 @@ Both take an optional table of options:
 |---|---|---|
 | `comments` | `false` | Keep comments as `#comment` nodes. |
 | `scripting` | `true` | Parse as if scripting is enabled, as browsers do; this makes `<noscript>`'s content text. |
+| `yield` | `nil` | A function called after each token, e.g. to yield from a coroutine so that a long parse doesn't block. |
 | `context` | `"body"` | `parse()` only: the element the fragment is parsed in, e.g. `"td"`, `"title"` or `"svg path"`. |
 
 Nodes have a `tag`: an element's name (lowercase, except for some SVG

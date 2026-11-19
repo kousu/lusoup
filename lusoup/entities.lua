@@ -9,6 +9,22 @@
 local entity_table = require("lusoup.entity_table")
 local utf8_char = require("lusoup.tokenizer").utf8_char
 
+-- table.concat, in pieces: gopher-lua (micro's Lua) pushes every element
+-- onto its fixed-size registry, so concatenating more than a few thousand
+-- at once fails with "registry overflow".
+local function concat(t, sep)
+    sep = sep or ""
+    local n = #t
+    if n <= 1000 then
+        return table.concat(t, sep)
+    end
+    local chunks = {}
+    for i = 1, n, 1000 do
+        chunks[#chunks + 1] = table.concat(t, sep, i, math.min(i + 999, n))
+    end
+    return concat(chunks, sep)
+end
+
 local MAX_ENTITY_LENGTH = 0
 for name in pairs(entity_table) do
     if #name > MAX_ENTITY_LENGTH then
@@ -117,7 +133,7 @@ local function decode(str, in_attribute)
             pos = amp + 1
         end
     end
-    return table.concat(out)
+    return concat(out)
 end
 
 return {
