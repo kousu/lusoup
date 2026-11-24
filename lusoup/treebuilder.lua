@@ -306,7 +306,9 @@ end
 -- ── Creating and inserting nodes ────────────────────────────────────────────
 
 function Builder:create_element(token, namespace)
-    local node = Node.new(token.tag, copy(token.attrs))
+    local attrs = token.attrs
+    -- most elements have no attributes: skip copying
+    local node = Node.new(token.tag, (attrs == nil or next(attrs) == nil) and {} or copy(attrs))
     node.namespace = namespace
     if token.attr_ns then
         node.attr_ns = token.attr_ns
@@ -319,7 +321,7 @@ end
 
 -- Where new nodes go: returns the parent, and the child to insert before (or nil).
 function Builder:insertion_location(override)
-    local target = override or self:current()
+    local target = override or self.stack[#self.stack]
     local parent, before
     if
         self.foster_parenting
@@ -355,7 +357,7 @@ function Builder:insertion_location(override)
     else
         parent = target
     end
-    if is_html(parent, "template") then
+    if parent ~= nil and parent.tag == "template" and rawget(parent, "namespace") == nil then
         parent = parent.content
     end
     return parent, before
@@ -455,8 +457,11 @@ end
 -- ── The stack of open elements ──────────────────────────────────────────────
 
 function Builder:pop()
-    local node = table.remove(self.stack)
-    if node and is_html(node, "option") then
+    local stack = self.stack
+    local n = #stack
+    local node = stack[n]
+    stack[n] = nil
+    if node and node.tag == "option" and rawget(node, "namespace") == nil then
         self:maybe_clone_into_selectedcontent(node)
     end
     return node
@@ -622,8 +627,9 @@ end
 
 function Builder:generate_implied_end_tags(except, thorough)
     local tags = thorough and IMPLIED_END_TAGS_THOROUGH or IMPLIED_END_TAGS
-    while #self.stack > 0 do
-        local node = self:current()
+    local stack = self.stack
+    while #stack > 0 do
+        local node = stack[#stack]
         if rawget(node, "namespace") ~= nil or not tags[node.tag] or node.tag == except then
             return
         end
@@ -894,8 +900,9 @@ function Builder:parse_text_element(token, tokenizer_state)
 end
 
 function Builder:clear_stack_to(tags)
-    while #self.stack > 0 do
-        local node = self:current()
+    local stack = self.stack
+    while #stack > 0 do
+        local node = stack[#stack]
         if rawget(node, "namespace") == nil and tags[node.tag] then
             return
         end

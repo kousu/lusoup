@@ -127,6 +127,7 @@ local function new(input)
         allow_cdata = nil, -- set by the tree builder: function() -> bool
         done = false,
         next_at = {}, -- see next_of()
+        simple_tags = {}, -- see fast_data()
     }, Tokenizer)
 end
 
@@ -217,7 +218,20 @@ function Tokenizer:next()
         -- in the data state, take whole text runs and well-formed tags at
         -- once; anything else goes through the state machine a character at
         -- a time
-        if self.state ~= "data" or not fast_data(self) then
+        local fast = self.state == "data" and fast_data(self)
+        if fast and fast ~= true then
+            -- a tag, returned directly rather than through the queue
+            if fast.type == "start" then
+                self.last_start_tag = fast.tag
+            end
+            local text = self.text
+            if #text > 0 then
+                self.text = {}
+                queue[1] = fast
+                return { type = "text", text = concat(text) }
+            end
+            return fast
+        elseif not fast then
             local pos = self.pos
             local c = self.input:sub(pos, pos)
             if c == "" then
@@ -381,7 +395,7 @@ local function skip_space(input, pos)
     return pos
 end
 
-local function fast_start_tag(self, start)
+local function fast_start_tag(self, start, no_emit)
     local input = self.input
     local e = scan_to(input, start, B_SLASH, B_GT)
     local token = {
@@ -449,8 +463,10 @@ local function fast_start_tag(self, start)
             end
         end
     end
-    self:emit(token)
-    return pos + 1
+    if not no_emit then
+        self:emit(token)
+    end
+    return pos + 1, token
 end
 
 local B_LT = 60
@@ -460,28 +476,60 @@ local function is_alpha_byte(b)
     return b ~= nil and ((b >= 97 and b <= 122) or (b >= 65 and b <= 90))
 end
 
+-- What the text between a `<` and the next `>` is, if it's a tag without
+-- attributes: { end_tag, name }, or false if it's anything else.
+local function classify_simple_tag(s)
+    if s:find("^[A-Za-z][A-Za-z0-9]*$") then
+        return { false, s:lower() }
+    elseif s:find("^/[A-Za-z][A-Za-z0-9]*$") then
+        return { true, s:sub(2):lower() }
+    end
+    return false
+end
+
+local MAX_SIMPLE_TAG = 16
+
 -- The data state's fast path, at the current position: consume a run of
--- text up to the next `<`, `&` or NUL, or a well-formed start or end tag,
--- and return true; or consume nothing and return false.
+-- text up to the next `<`, `&` or NUL and return true, or consume a
+-- well-formed start or end tag and return its token (not emitted), or
+-- consume nothing and return false.
 function fast_data(self)
     local input, pos = self.input, self.pos
     local b = byte(input, pos)
     if b == B_LT then
+        -- most tags have no attributes and recur often (<td>, </tr>): look
+        -- them up by their text
+        local gt = self:next_of(">")
+        if gt and gt - pos <= MAX_SIMPLE_TAG + 1 then
+            local s = input:sub(pos + 1, gt - 1)
+            local simple = self.simple_tags
+            local hit = simple[s]
+            if hit == nil then
+                hit = classify_simple_tag(s)
+                simple[s] = hit
+            end
+            if hit then
+                self.pos = gt + 1
+                if hit[1] then
+                    return { type = "end", tag = hit[2] }
+                end
+                return { type = "start", tag = hit[2], attrs = {}, attr_order = {}, self_closing = false }
+            end
+        end
         local b2 = byte(input, pos + 1)
         if b2 == B_SLASH then
             if is_alpha_byte(byte(input, pos + 2)) then
                 local e = scan_to(input, pos + 3, B_SLASH, B_GT)
                 if byte(input, e) == B_GT then
-                    self:emit({ type = "end", tag = input:sub(pos + 2, e - 1):lower() })
                     self.pos = e + 1
-                    return true
+                    return { type = "end", tag = input:sub(pos + 2, e - 1):lower() }
                 end
             end
         elseif is_alpha_byte(b2) then
-            local after = fast_start_tag(self, pos + 1)
+            local after, token = fast_start_tag(self, pos + 1, true)
             if after then
                 self.pos = after
-                return true
+                return token
             end
         end
         return false
