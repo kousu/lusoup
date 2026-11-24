@@ -205,21 +205,35 @@ function Tokenizer:reconsume(state)
     self.state = state
 end
 
+local fast_data -- defined below
+
 -- Return the next token.
 function Tokenizer:next()
-    while #self.queue == 0 do
+    local queue = self.queue
+    while #queue == 0 do
         if self.done then
             return { type = "eof" }
         end
-        local pos = self.pos
-        local c = self.input:sub(pos, pos)
-        if c == "" then
-            c = nil
+        -- in the data state, take whole text runs and well-formed tags at
+        -- once; anything else goes through the state machine a character at
+        -- a time
+        if self.state ~= "data" or not fast_data(self) then
+            local pos = self.pos
+            local c = self.input:sub(pos, pos)
+            if c == "" then
+                c = nil
+            end
+            self.pos = pos + 1
+            states[self.state](self, c)
+            queue = self.queue
         end
-        self.pos = pos + 1
-        states[self.state](self, c)
     end
-    return table.remove(self.queue, 1)
+    if #queue == 1 then
+        local t = queue[1]
+        queue[1] = nil
+        return t
+    end
+    return table.remove(queue, 1)
 end
 
 -- Does the input at the current position (case-insensitively) start with `s`?
@@ -437,6 +451,57 @@ local function fast_start_tag(self, start)
     end
     self:emit(token)
     return pos + 1
+end
+
+local B_LT = 60
+
+-- Is byte `b` an ASCII letter?
+local function is_alpha_byte(b)
+    return b ~= nil and ((b >= 97 and b <= 122) or (b >= 65 and b <= 90))
+end
+
+-- The data state's fast path, at the current position: consume a run of
+-- text up to the next `<`, `&` or NUL, or a well-formed start or end tag,
+-- and return true; or consume nothing and return false.
+function fast_data(self)
+    local input, pos = self.input, self.pos
+    local b = byte(input, pos)
+    if b == B_LT then
+        local b2 = byte(input, pos + 1)
+        if b2 == B_SLASH then
+            if is_alpha_byte(byte(input, pos + 2)) then
+                local e = scan_to(input, pos + 3, B_SLASH, B_GT)
+                if byte(input, e) == B_GT then
+                    self:emit({ type = "end", tag = input:sub(pos + 2, e - 1):lower() })
+                    self.pos = e + 1
+                    return true
+                end
+            end
+        elseif is_alpha_byte(b2) then
+            local after = fast_start_tag(self, pos + 1)
+            if after then
+                self.pos = after
+                return true
+            end
+        end
+        return false
+    elseif b == nil or b == B_AMP or b == B_NUL then
+        return false
+    end
+    local stop = self:next_of("<")
+    local at = self:next_of("&")
+    if at and (not stop or at < stop) then
+        stop = at
+    end
+    at = self:next_of("\0")
+    if at and (not stop or at < stop) then
+        stop = at
+    end
+    stop = stop or (#input + 1)
+    local text = self.text
+    text[#text + 1] = input:sub(pos, stop - 1)
+    self.pos = stop
+    return true
 end
 
 states.tag_open = function(self, c)

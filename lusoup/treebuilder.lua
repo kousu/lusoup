@@ -59,7 +59,7 @@ local SCOPE_MATHML = set("mi mo mn ms mtext annotation-xml")
 local SCOPE_SVG = set("foreignObject desc title")
 
 local function is_special(node)
-    local ns = node.namespace
+    local ns = rawget(node, "namespace")
     if ns == nil then
         return SPECIAL[node.tag]
     elseif ns == "math" then
@@ -71,7 +71,7 @@ end
 
 -- Is `node` an HTML element with this tag?
 local function is_html(node, tag)
-    return node ~= nil and node.namespace == nil and node.tag == tag
+    return node ~= nil and rawget(node, "namespace") == nil and node.tag == tag
 end
 
 -- ── Foreign content tables ──────────────────────────────────────────────────
@@ -323,7 +323,7 @@ function Builder:insertion_location(override)
     local parent, before
     if
         self.foster_parenting
-        and target.namespace == nil
+        and rawget(target, "namespace") == nil
         and (
             target.tag == "table"
             or target.tag == "tbody"
@@ -476,7 +476,7 @@ end
 
 local function deep_clone(node)
     local clone = Node.new(node.tag, copy(node.attrs))
-    clone.namespace = node.namespace
+    clone.namespace = rawget(node, "namespace")
     clone.attr_ns = node.attr_ns
     clone.text_content = node.text_content
     for _, child in ipairs(node.children) do
@@ -535,7 +535,7 @@ end
 function Builder:pop_until_tag(tags)
     while #self.stack > 0 do
         local node = self:pop()
-        if node.namespace == nil and tags[node.tag] then
+        if rawget(node, "namespace") == nil and tags[node.tag] then
             return
         end
     end
@@ -573,7 +573,7 @@ end
 function Builder:in_scope(tags, kind)
     for i = #self.stack, 1, -1 do
         local node = self.stack[i]
-        local html = node.namespace == nil
+        local html = rawget(node, "namespace") == nil
         if html and tags[node.tag] then
             return node
         end
@@ -590,7 +590,7 @@ function Builder:in_scope(tags, kind)
                 then
                     return nil
                 end
-            elseif node.namespace == "math" then
+            elseif rawget(node, "namespace") == "math" then
                 if SCOPE_MATHML[node.tag] then
                     return nil
                 end
@@ -610,9 +610,9 @@ function Builder:element_in_scope(target)
             return true
         end
         if
-            node.namespace == nil and SCOPE_HTML[node.tag]
-            or node.namespace == "math" and SCOPE_MATHML[node.tag]
-            or node.namespace == "svg" and SCOPE_SVG[node.tag]
+            rawget(node, "namespace") == nil and SCOPE_HTML[node.tag]
+            or rawget(node, "namespace") == "math" and SCOPE_MATHML[node.tag]
+            or rawget(node, "namespace") == "svg" and SCOPE_SVG[node.tag]
         then
             return false
         end
@@ -624,7 +624,7 @@ function Builder:generate_implied_end_tags(except, thorough)
     local tags = thorough and IMPLIED_END_TAGS_THOROUGH or IMPLIED_END_TAGS
     while #self.stack > 0 do
         local node = self:current()
-        if node.namespace ~= nil or not tags[node.tag] or node.tag == except then
+        if rawget(node, "namespace") ~= nil or not tags[node.tag] or node.tag == except then
             return
         end
         self:pop()
@@ -844,7 +844,7 @@ function Builder:reset_insertion_mode()
         if last and self.context then
             node = self.context
         end
-        local tag = node.namespace == nil and node.tag or nil
+        local tag = rawget(node, "namespace") == nil and node.tag or nil
         if (tag == "td" or tag == "th") and not last then
             self.mode = "in_cell"
             return
@@ -896,7 +896,7 @@ end
 function Builder:clear_stack_to(tags)
     while #self.stack > 0 do
         local node = self:current()
-        if node.namespace == nil and tags[node.tag] then
+        if rawget(node, "namespace") == nil and tags[node.tag] then
             return
         end
         self:pop()
@@ -1306,7 +1306,7 @@ function Builder:in_body_start(t, tag)
     elseif HEADINGS[tag] then
         self:close_p_if_in_button_scope()
         local current = self:current()
-        if current.namespace == nil and HEADINGS[current.tag] then
+        if rawget(current, "namespace") == nil and HEADINGS[current.tag] then
             self:pop()
         end
         self:insert_html_element(t)
@@ -1330,7 +1330,7 @@ function Builder:in_body_start(t, tag)
         local targets = tag == "li" and { li = true } or { dd = true, dt = true }
         for i = #self.stack, 1, -1 do
             local node = self.stack[i]
-            if node.namespace == nil and targets[node.tag] then
+            if rawget(node, "namespace") == nil and targets[node.tag] then
                 self:generate_implied_end_tags(node.tag)
                 self:pop_until_tag({ [node.tag] = true })
                 break
@@ -1614,7 +1614,7 @@ modes.in_table = function(self, t)
     local current = self:current()
     if
         t.type == "text"
-        and current.namespace == nil
+        and rawget(current, "namespace") == nil
         and (
             current.tag == "table"
             or current.tag == "tbody"
@@ -2178,17 +2178,18 @@ end
 -- ── Foreign content ─────────────────────────────────────────────────────────
 
 local function is_mathml_text_integration_point(node)
-    return node.namespace == "math"
+    return rawget(node, "namespace") == "math"
         and (node.tag == "mi" or node.tag == "mo" or node.tag == "mn" or node.tag == "ms" or node.tag == "mtext")
 end
 
 local function is_html_integration_point(node)
-    if node.namespace == "math" and node.tag == "annotation-xml" then
+    if rawget(node, "namespace") == "math" and node.tag == "annotation-xml" then
         local encoding = node.attrs.encoding
         encoding = encoding and encoding:lower()
         return encoding == "text/html" or encoding == "application/xhtml+xml"
     end
-    return node.namespace == "svg" and (node.tag == "foreignObject" or node.tag == "desc" or node.tag == "title")
+    return rawget(node, "namespace") == "svg"
+        and (node.tag == "foreignObject" or node.tag == "desc" or node.tag == "title")
 end
 
 -- Pop foreign elements until the current node is HTML or an integration point.
@@ -2196,7 +2197,7 @@ function Builder:pop_foreign()
     while true do
         local current = self:current()
         if
-            current.namespace == nil
+            rawget(current, "namespace") == nil
             or is_mathml_text_integration_point(current)
             or is_html_integration_point(current)
         then
@@ -2231,7 +2232,7 @@ function Builder:foreign_content(t)
             self:pop_foreign()
             return self:process(t)
         end
-        local namespace = self:adjusted_current().namespace
+        local namespace = rawget(self:adjusted_current(), "namespace")
         if namespace == "math" then
             adjust_mathml_attributes(t)
         elseif namespace == "svg" then
@@ -2259,7 +2260,7 @@ function Builder:foreign_content(t)
             end
             i = i - 1
             node = self.stack[i]
-            if node.namespace == nil then
+            if rawget(node, "namespace") == nil then
                 return self:process(t)
             end
         end
@@ -2272,7 +2273,7 @@ function Builder:use_foreign_rules(t)
         return false
     end
     local node = self:adjusted_current()
-    if node.namespace == nil then
+    if rawget(node, "namespace") == nil then
         return false
     end
     if is_mathml_text_integration_point(node) then
@@ -2280,7 +2281,12 @@ function Builder:use_foreign_rules(t)
             return false
         end
     end
-    if node.namespace == "math" and node.tag == "annotation-xml" and t.type == "start" and t.tag == "svg" then
+    if
+        rawget(node, "namespace") == "math"
+        and node.tag == "annotation-xml"
+        and t.type == "start"
+        and t.tag == "svg"
+    then
         return false
     end
     if is_html_integration_point(node) and (t.type == "start" or t.type == "text") then
@@ -2323,7 +2329,7 @@ local function new_builder(html_str, options)
     builder.tokenizer = tokenizer_mod.new(html_str or "")
     builder.tokenizer.allow_cdata = function()
         local node = builder:adjusted_current()
-        return node ~= nil and node.namespace ~= nil
+        return node ~= nil and rawget(node, "namespace") ~= nil
     end
     return builder
 end
