@@ -1,21 +1,34 @@
 local Node = require("lusoup.dom")
 
 local VOID_ELEMENTS = {
-    area = true, base = true, br = true, col = true, embed = true,
-    hr = true, img = true, input = true, link = true, meta = true,
-    param = true, source = true, track = true, wbr = true
+    area = true,
+    base = true,
+    br = true,
+    col = true,
+    embed = true,
+    hr = true,
+    img = true,
+    input = true,
+    link = true,
+    meta = true,
+    param = true,
+    source = true,
+    track = true,
+    wbr = true,
 }
 
 local function parse_attributes(attr_str)
     local attrs = {}
-    if not attr_str or attr_str == "" then return attrs end
+    if not attr_str or attr_str == "" then
+        return attrs
+    end
 
-    local remaining = attr_str:gsub('([%w_%-%:]+)%s*=%s*["\']([^"\']*)["\']', function(k, v)
+    local remaining = attr_str:gsub("([%w_%-%:]+)%s*=%s*[\"']([^\"']*)[\"']", function(k, v)
         attrs[k:lower()] = v
         return " "
     end)
 
-    remaining = remaining:gsub('([%w_%-%:]+)%s*=%s*([^%s"\'>]+)', function(k, v)
+    remaining = remaining:gsub("([%w_%-%:]+)%s*=%s*([^%s\"'>]+)", function(k, v)
         local lower_k = k:lower()
         if not attrs[lower_k] then
             attrs[lower_k] = v
@@ -23,7 +36,7 @@ local function parse_attributes(attr_str)
         return " "
     end)
 
-    for key in remaining:gmatch('([%w_%-%:]+)') do
+    for key in remaining:gmatch("([%w_%-%:]+)") do
         local lower_k = key:lower()
         if not attrs[lower_k] then
             attrs[lower_k] = true
@@ -52,7 +65,7 @@ local function parse(html_str)
                 break
             end
         else
-            local tag_start, tag_end, is_closing, tag_name, attr_str, self_closing = 
+            local tag_start, tag_end, is_closing, tag_name, attr_str, self_closing =
                 html_str:find("<(/?)([%w_%-%:]+)(.-)(/?)>", pos)
 
             if not tag_start then
@@ -122,5 +135,5 @@ local function parse(html_str)
 end
 
 return {
-    parse = parse
+    parse = parse,
 }

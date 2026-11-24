@@ -1,0 +1,3 @@
+# lusoup keeps its original 4-space indents
+indent_type = "Spaces"
+indent_width = 4

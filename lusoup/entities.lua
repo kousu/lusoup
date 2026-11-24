@@ -1,14 +1,16 @@
 local entities = {
     quot = '"',
-    amp = '&',
+    amp = "&",
     apos = "'",
-    lt = '<',
-    gt = '>',
-    nbsp = ' ',
+    lt = "<",
+    gt = ">",
+    nbsp = " ",
 }
 
 local function decode(str)
-    if not str then return "" end
+    if not str then
+        return ""
+    end
     str = str:gsub("&(#?x?%w+);", function(entity)
         if entity:sub(1, 2) == "#x" or entity:sub(1, 2) == "#X" then
             local hex = entity:sub(3)
@@ -25,5 +27,5 @@ local function decode(str)
 end
 
 return {
-    decode = decode
+    decode = decode,
 }

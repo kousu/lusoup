@@ -16,10 +16,14 @@ local article = soup:select_one("article.post")
 
 -- Remove ads and scripts
 local ad = article:select_one(".ad-banner")
-if ad then ad:decompose() end
+if ad then
+    ad:decompose()
+end
 
 local script = article:find("script")
-if script then script:decompose() end
+if script then
+    script:decompose()
+end
 
 -- Print cleaned output
 print("Cleaned Outer HTML:")

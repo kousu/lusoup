@@ -8,7 +8,7 @@ function Node.new(tag, attrs, parent)
         attrs = attrs or {},
         children = {},
         parent = parent or nil,
-        text_content = nil
+        text_content = nil,
     }
     return setmetatable(self, Node)
 end
@@ -19,7 +19,9 @@ function Node.__index(table, key)
     end
     if type(key) == "string" and not key:match("^_") then
         local child = table:find(key)
-        if child then return child end
+        if child then
+            return child
+        end
     end
     return rawget(table, key)
 end
@@ -30,7 +32,9 @@ function Node:append_child(child)
 end
 
 function Node:attr(key)
-    if not key then return nil end
+    if not key then
+        return nil
+    end
     return self.attrs[key:lower()]
 end
 
@@ -65,7 +69,9 @@ function Node:children_nodes()
 end
 
 function Node:next_sibling()
-    if not self.parent then return nil end
+    if not self.parent then
+        return nil
+    end
     local siblings = self.parent.children
     for i, child in ipairs(siblings) do
         if child == self then
@@ -81,7 +87,9 @@ function Node:next_sibling()
 end
 
 function Node:prev_sibling()
-    if not self.parent then return nil end
+    if not self.parent then
+        return nil
+    end
     local siblings = self.parent.children
     for i, child in ipairs(siblings) do
         if child == self then
@@ -149,7 +157,9 @@ function Node:prev_element()
 end
 
 function Node:decompose()
-    if not self.parent then return end
+    if not self.parent then
+        return
+    end
     for i, child in ipairs(self.parent.children) do
         if child == self then
             table.remove(self.parent.children, i)
@@ -194,9 +204,20 @@ function Node:outer_html()
     end
 
     local VOID_ELEMENTS = {
-        area = true, base = true, br = true, col = true, embed = true,
-        hr = true, img = true, input = true, link = true, meta = true,
-        param = true, source = true, track = true, wbr = true
+        area = true,
+        base = true,
+        br = true,
+        col = true,
+        embed = true,
+        hr = true,
+        img = true,
+        input = true,
+        link = true,
+        meta = true,
+        param = true,
+        source = true,
+        track = true,
+        wbr = true,
     }
 
     if VOID_ELEMENTS[self.tag:lower()] then
@@ -222,7 +243,9 @@ function Node:find_all(tag, attrs)
         if attrs then
             for k, v in pairs(attrs) do
                 local attr_val = node:attr(k)
-                if not attr_val then return false end
+                if not attr_val then
+                    return false
+                end
                 if type(v) == "string" and attr_val ~= v then
                     return false
                 end

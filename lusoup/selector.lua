@@ -11,7 +11,7 @@ local function parse_single_selector(sel)
         table.insert(attrs, {
             key = k:lower(),
             op = op,
-            val = v
+            val = v,
         })
         return ""
     end)
@@ -19,13 +19,15 @@ local function parse_single_selector(sel)
     sel = sel:gsub("%[([%w_%-%:]+)%]", function(k)
         table.insert(attrs, {
             key = k:lower(),
-            op = "exists"
+            op = "exists",
         })
         return ""
     end)
 
     local tag = sel:match("^([%w_%-%*]+)")
-    if tag == "" then tag = nil end
+    if tag == "" then
+        tag = nil
+    end
 
     local id = sel:match("#([%w_%-%:]+)")
 
@@ -43,7 +45,7 @@ local function parse_single_selector(sel)
         id = id,
         classes = classes,
         attrs = attrs,
-        pseudo = pseudo
+        pseudo = pseudo,
     }
 end
 
@@ -62,7 +64,9 @@ local function node_matches(node, rule)
 
     if #rule.classes > 0 then
         local node_class = node:attr("class")
-        if not node_class then return false end
+        if not node_class then
+            return false
+        end
         local class_str = " " .. node_class .. " "
         for _, c in ipairs(rule.classes) do
             if not class_str:find(" " .. c .. " ", 1, true) then
@@ -73,7 +77,9 @@ local function node_matches(node, rule)
 
     for _, a in ipairs(rule.attrs) do
         local val = node:attr(a.key)
-        if not val then return false end
+        if not val then
+            return false
+        end
 
         if a.op == "=" and val ~= a.val then
             return false
@@ -123,7 +129,9 @@ local function execute_single_chain(root, query)
             is_direct_child = true
             i = i + 1
             token = tokens[i]
-            if not token then break end
+            if not token then
+                break
+            end
         end
 
         local rule = parse_single_selector(token)

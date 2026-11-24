@@ -6,9 +6,9 @@ print("Fetching top stories from News...\n")
 -- Fetch webpage
 local res, err = lureq.get("https://news.ycombinator.com/", {
     headers = {
-        ["User-Agent"] = "Mozilla/5.0 (Linux; x86_64)"
+        ["User-Agent"] = "Mozilla/5.0 (Linux; x86_64)",
     },
-    timeout = 10
+    timeout = 10,
 })
 
 if not res or not res.ok then
