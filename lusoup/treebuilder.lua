@@ -2350,7 +2350,19 @@ function Builder:run()
             end
         end
         if t then
-            self:dispatch(t)
+            -- dispatch(), inlined for the common case: the adjusted current
+            -- node is an HTML element, so the foreign content rules don't apply
+            local stack = self.stack
+            local n = #stack
+            local node = stack[n]
+            if n == 1 and self.context then
+                node = self.context
+            end
+            if node == nil or rawget(node, "namespace") == nil then
+                modes[self.mode](self, t)
+            else
+                self:dispatch(t)
+            end
             if t.type == "eof" then
                 self.stopped = true
             end
